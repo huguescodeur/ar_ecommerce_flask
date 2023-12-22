@@ -5,6 +5,8 @@ import secrets
 import requests
 from flask import Flask, jsonify, request, session
 from flask_bcrypt import Bcrypt
+from flask_jwt_extended import JWTManager, jwt_required, get_jwt_identity
+from flask_jwt_extended import create_access_token
 from flask_login import LoginManager, UserMixin, login_user, logout_user, current_user, login_required
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
@@ -20,13 +22,16 @@ app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:''@localhost/ardb'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'Hugues Codeur'
+app.config['JWT_SECRET_KEY'] = 'Hugues Codeur'
 db = SQLAlchemy(app)
+jwt = JWTManager(app)
 bcrypt = Bcrypt(app)
 CORS(app, supports_credentials=True)
 # ? Initialisation du gestionnaire de connexion
 login_manager = LoginManager(app)
 login_manager.init_app(app)
 login_manager.login_view = 'login'
+
 
 # Configurez votre clé d'API SendGrid
 sendgrid_api_key = "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"
@@ -109,54 +114,127 @@ def login():
             return jsonify(response_data), 401
 
         if user and user.verify_password(password):
-            # Si le mot de passe est correct, enregistrons l'utilisateur dans la session
-            login_user(user)
-            print(login_user(user))
-
-            # Stockons les informations de l'utilisateur dans la session
-            session['user_data'] = {
+            user_data = {
                 'id': user.id_user,
                 'username': user.username,
                 'email': user.email
             }
-
-            # Construisons la réponse au format JSON
-            response_data = {
-                'message': 'Connexion réussie'}
-            return jsonify(response_data), 200
+            # Si le mot de passe est correct, créons un token pour le user
+            access_token = create_access_token(identity=user_data)
+            # print(access_token)
+            return jsonify(access_token=access_token), 200
         else:
-            # Construisons la réponse au format JSON pour les échecs de connexion
             response_data = {
                 'message': 'Nom d\'utilisateur ou mot de passe incorrect'}
             return jsonify(response_data), 401
     except Exception as e:
-        # En cas d'erreur inattendue, renvoyer une réponse JSON avec un code d'erreur
         response_data = {
             'message': 'Erreur interne du serveur', 'error': str(e)}
         return jsonify(response_data), 500
+# @app.route("/login", methods=["POST"])
+# def login():
+#     data = request.get_json()
+
+#     email = data.get('email')
+#     password = data.get('password')
+
+#     try:
+#         # Récupérons l'utilisateur depuis la base de données
+#         user = User.query.filter_by(email=email).first()
+
+#         if user is None:
+#             response_data = {'message': 'Email ou mot de passe incorrect'}
+#             return jsonify(response_data), 401
+
+#         if user and user.verify_password(password):
+#             # Si le mot de passe est correct, enregistrons l'utilisateur dans la session
+#             login_user(user)
+#             print(login_user(user))
+
+#             # Stockons les informations de l'utilisateur dans la session
+#             session['user_data'] = {
+#                 'id': user.id_user,
+#                 'username': user.username,
+#                 'email': user.email
+#             }
+
+#             # Construisons la réponse au format JSON
+#             response_data = {
+#                 'message': 'Connexion réussie'}
+#             return jsonify(response_data), 200
+#         else:
+#             # Construisons la réponse au format JSON pour les échecs de connexion
+#             response_data = {
+#                 'message': 'Nom d\'utilisateur ou mot de passe incorrect'}
+#             return jsonify(response_data), 401
+#     except Exception as e:
+#         # En cas d'erreur inattendue, renvoyer une réponse JSON avec un code d'erreur
+#         response_data = {
+#             'message': 'Erreur interne du serveur', 'error': str(e)}
+#         return jsonify(response_data), 500
 
 
 # ? Route pour obtenir les informations de l'utilisateur actuellement connecté
 @app.route("/current-user", methods=["GET", "POST"])
+@jwt_required()
 def get_current_user():
-    if current_user.is_authenticated:
-        # Assurez-vous que l'utilisateur est authentifié
-        print(current_user.is_authenticated)
-        print(current_user.id_user)
-        user_data = {
-            'id': current_user.id_user,
-            'username': current_user.username,
-            'email': current_user.email
-        }
+    try:
+        # Obtenez l'ID utilisateur à partir du jeton d'accès
+        user_id = get_jwt_identity()['id']
 
-        print(user_data)
-        return jsonify(user_data), 200
-    elif 'user_data' in session:
-        user_data = session['user_data']
-        print(user_data)
-        return jsonify(user_data), 200
-    else:
-        return jsonify({'error': 'User not authenticated'}), 401
+        # Recherchez l'utilisateur dans la base de données
+        user = User.query.filter_by(id_user=user_id).first()
+
+        if user:
+            user_data = {
+                'id': user.id_user,
+                'username': user.username,
+                'email': user.email
+            }
+            return jsonify(user_data), 200
+        else:
+            return jsonify({'error': 'User not found'}), 404
+
+    except Exception as e:
+        return jsonify({'error': 'Invalid token', 'details': str(e)}), 401
+
+
+# # ? Route pour obtenir les informations de l'utilisateur actuellement connecté
+# @app.route("/current-user", methods=["GET", "POST"])
+# @jwt_required()
+# def get_current_user():
+#     user_id = get_jwt_identity()
+#     print(user_id)
+#     user = User.query.filter_by(id_user=user_id).first()
+
+#     if user:
+#         user_data = {
+#             'id': user.id_user,
+#             'username': user.username,
+#             'email': user.email
+#         }
+#         return jsonify(user_data), 200
+#     else:
+#         return jsonify({'error': 'User not authenticated'}), 401
+# def get_current_user():
+#     if current_user.is_authenticated:
+#         # Assurez-vous que l'utilisateur est authentifié
+#         print(current_user.is_authenticated)
+#         print(current_user.id_user)
+#         user_data = {
+#             'id': current_user.id_user,
+#             'username': current_user.username,
+#             'email': current_user.email
+#         }
+
+#         print(user_data)
+#         return jsonify(user_data), 200
+#     elif 'user_data' in session:
+#         user_data = session['user_data']
+#         print(user_data)
+#         return jsonify(user_data), 200
+#     else:
+#         return jsonify({'error': 'User not authenticated'}), 401
 
 
 # ? Register
